@@ -4,6 +4,38 @@ import { useMessageHandler } from '../../shared/useMessageHandler';
 const APIBEAM_SOURCE = 'apibeam';
 const APIBEAM_RESPONSE = 'apibeam-response';
 
+const waitForComposer = async (timeoutMs = 20000): Promise<HTMLElement | null> => {
+  const deadline = Date.now() + timeoutMs;
+  const selectors = [
+    '#prompt-textarea',
+    'div.ProseMirror[contenteditable="true"][role="textbox"]',
+    '[contenteditable="true"][role="textbox"]',
+    'textarea[placeholder]',
+  ];
+
+  while (Date.now() < deadline) {
+    for (const selector of selectors) {
+      const element = document.querySelector(selector) as HTMLElement | null;
+      if (element) return element;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 150));
+  }
+  return null;
+};
+
+const waitForSendButton = async (timeoutMs = 8000): Promise<HTMLButtonElement | null> => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const button =
+      (document.querySelector('#composer-submit-button') as HTMLButtonElement | null) ||
+      (document.querySelector('button[data-testid="send-button"]') as HTMLButtonElement | null);
+    const label = button?.getAttribute('aria-label')?.toLowerCase() || '';
+    if (button && !button.disabled && !label.includes('stop')) return button;
+    await new Promise((resolve) => window.setTimeout(resolve, 100));
+  }
+  return null;
+};
+
 const isLikelyApiResponse = (value: any) =>
   Boolean(
     value &&
@@ -17,64 +49,55 @@ const isLikelyApiResponse = (value: any) =>
 
 export const ChatGPT = () => {
   const sendToChat = useCallback(
-    (
+    async (
       content: { route: string; body?: object },
       prompt: string,
       _useTemporaryChat?: boolean,
     ) => {
-      const contentArea = document.querySelector(
-        '#prompt-textarea',
-      ) as HTMLElement | null;
-
+      const contentArea = await waitForComposer();
       if (!contentArea) {
         chrome.runtime.sendMessage({
           type: 'question_error',
           error: {
             code: 'composer_not_found',
-            message: 'ApiBeam could not find the ChatGPT composer.',
+            message: 'ApiBeam waited for ChatGPT but the composer never became available.',
           },
         });
         return;
       }
 
       const text = `${prompt ? `${prompt}\n` : ''}Route: ${content.route}\nPayload: ${JSON.stringify(content.body)}`;
-
       contentArea.focus();
-      contentArea.textContent = text;
-      contentArea.dispatchEvent(
-        new InputEvent('input', {
-          bubbles: true,
-          inputType: 'insertText',
-          data: text,
-        }),
-      );
-
-      window.setTimeout(() => {
-        const submitButton =
-          (document.querySelector(
-            '#composer-submit-button',
-          ) as HTMLButtonElement | null) ||
-          (document.querySelector(
-            'button[data-testid="send-button"]',
-          ) as HTMLButtonElement | null);
-
-        const ariaLabel = submitButton?.getAttribute('aria-label')?.toLowerCase() || '';
-        const looksLikeStopButton = ariaLabel.includes('stop');
-
-        if (submitButton && !submitButton.disabled && !looksLikeStopButton) {
-          submitButton.click();
-          return;
-        }
-
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(contentArea);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      const inserted = document.execCommand('insertText', false, text);
+      if (!inserted) {
         chrome.runtime.sendMessage({
           type: 'question_error',
           error: {
-            code: 'composer_busy',
-            message:
-              'ChatGPT is still busy or its Send button could not be found. ApiBeam will return an error instead of interrupting another response.',
+            code: 'composer_input_failed',
+            message: 'ApiBeam could not update the ChatGPT composer.',
           },
         });
-      }, 250);
+        return;
+      }
+
+      const submitButton = await waitForSendButton();
+      if (submitButton) {
+        submitButton.click();
+        return;
+      }
+
+      chrome.runtime.sendMessage({
+        type: 'question_error',
+        error: {
+          code: 'composer_busy',
+          message: 'ChatGPT composer appeared, but the Send button never became ready.',
+        },
+      });
     },
     [],
   );

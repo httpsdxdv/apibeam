@@ -2,7 +2,7 @@ import { io } from 'socket.io-client';
 import type { Socket } from 'socket.io-client';
 
 // This fork is optimized for local Docker self-hosting.
-export const DEFAULT_API_BASE_URL = 'http://localhost:3000/';
+export const DEFAULT_API_BASE_URL = 'http://127.0.0.1:3000/';
 export const DEFAULT_ROOM_ID = 'local-cline';
 const chatgptBaseUrl = 'https://chatgpt.com';
 const claudeBaseUrl = 'https://claude.ai/new';
@@ -76,23 +76,25 @@ chrome.runtime.onInstalled.addListener((details) => {
   }
 });
 
-const createNewRoom = () => {
-  const roomId = DEFAULT_ROOM_ID;
-  chrome.storage.local.set({ roomId });
-  return roomId;
-};
-
 const getRoomId = () =>
   new Promise<string>((resolve) => {
     chrome.storage.local.get('roomId', (settings) => {
-      resolve(settings?.roomId || createNewRoom());
+      if (settings?.roomId !== DEFAULT_ROOM_ID) {
+        chrome.storage.local.set({ roomId: DEFAULT_ROOM_ID });
+      }
+      resolve(DEFAULT_ROOM_ID);
     });
   });
 
 const getApiBaseUrl = () =>
   new Promise<string>((resolve) => {
     chrome.storage.local.get(['apiBaseUrl'], (result) => {
-      resolve(normalizeApiBaseUrl(result.apiBaseUrl || DEFAULT_API_BASE_URL));
+      const localBase = normalizeApiBaseUrl(DEFAULT_API_BASE_URL);
+      const storedBase = normalizeApiBaseUrl(result.apiBaseUrl || DEFAULT_API_BASE_URL);
+      if (storedBase !== localBase) {
+        chrome.storage.local.set({ apiBaseUrl: localBase });
+      }
+      resolve(localBase);
     });
   });
 
@@ -124,6 +126,11 @@ let socket: Socket | undefined;
 const requestQueue: RelayRequest[] = [];
 let activeRequest: RelayRequest | undefined;
 let processingQueue = false;
+let httpBridgeRunning = false;
+let httpBridgeConnected = false;
+let httpBridgeGeneration = 0;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const broadcastConnectionStatus = () => {
   chrome.tabs.query({}, (tabs) => {
@@ -210,26 +217,34 @@ const sendMessageToTabWithRetry = (
     });
   });
 
-const emitActiveFailure = async (message: string, code = 'browser_delivery_error') => {
-  if (!activeRequest || !socket) return;
+const sendClientResponse = async (requestId: string, message: any) => {
   const roomId = await getRoomId();
-  socket.emit('clientResponse', {
-    roomId,
-    requestId: activeRequest.requestId,
-    message: {
-      error: {
-        message,
-        type: 'apibeam_browser_error',
-        code,
-      },
-    },
+  if (socket?.connected) {
+    socket.emit('clientResponse', { roomId, requestId, message });
+    return;
+  }
+
+  const base = await getApiBaseUrl();
+  const response = await fetch(`${base}connect/${roomId}/response`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ requestId, message }),
+  });
+  if (!response.ok) throw new Error(`HTTP bridge response failed (${response.status})`);
+};
+
+const emitActiveFailure = async (message: string, code = 'browser_delivery_error') => {
+  if (!activeRequest) return;
+  const requestId = activeRequest.requestId;
+  await sendClientResponse(requestId, {
+    error: { message, type: 'apibeam_browser_error', code },
   });
   activeRequest = undefined;
 };
 
 const processNextRequest = async () => {
   if (processingQueue || activeRequest || requestQueue.length === 0) return;
-  if (!socket?.connected) return;
+  if (!socket?.connected && !httpBridgeConnected) return;
 
   processingQueue = true;
   activeRequest = requestQueue.shift();
@@ -293,7 +308,60 @@ const resetActiveBrowserRequest = async (requestId: string) => {
   setTimeout(() => void processNextRequest(), 2500);
 };
 
+const startHttpBridge = () => {
+  if (httpBridgeRunning) return;
+  httpBridgeRunning = true;
+  const generation = ++httpBridgeGeneration;
+
+  void (async () => {
+    while (httpBridgeRunning && generation === httpBridgeGeneration) {
+      let delay = 750;
+      try {
+        const roomId = await getRoomId();
+        const base = await getApiBaseUrl();
+        const response = await fetch(`${base}connect/${roomId}/next`, {
+          cache: 'no-store',
+        });
+        if (!response.ok) throw new Error(`HTTP bridge poll failed (${response.status})`);
+
+        const data = await response.json();
+        httpBridgeConnected = true;
+        if (!socket?.connected && socketConnectionStatus.status !== 'connected') {
+          setConnectionStatus('connected');
+        }
+
+        const request = data?.request as RelayRequest | null;
+        if (
+          request?.requestId &&
+          activeRequest?.requestId !== request.requestId &&
+          !requestQueue.some((item) => item.requestId === request.requestId)
+        ) {
+          requestQueue.push(request);
+          void processNextRequest();
+          delay = 50;
+        }
+      } catch (error) {
+        httpBridgeConnected = false;
+        if (!socket?.connected) {
+          setConnectionStatus(
+            'disconnected',
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      }
+      await sleep(delay);
+    }
+  })();
+};
+
+const stopHttpBridge = () => {
+  httpBridgeRunning = false;
+  httpBridgeConnected = false;
+  httpBridgeGeneration += 1;
+};
+
 async function connectWS() {
+  startHttpBridge();
   const baseUrl = await getApiBaseUrl();
 
   if (socket?.connected) return;
@@ -333,11 +401,11 @@ async function connectWS() {
   });
 
   socket.on('disconnect', (reason) => {
-    setConnectionStatus('disconnected', reason);
+    if (!httpBridgeConnected) setConnectionStatus('disconnected', reason);
   });
 
   socket.on('connect_error', (error) => {
-    setConnectionStatus('disconnected', error.message);
+    if (!httpBridgeConnected) setConnectionStatus('disconnected', error.message);
   });
 
   socket.on('serverMessage', (message: RelayRequest) => {
@@ -355,6 +423,7 @@ async function connectWS() {
 }
 
 const disconnectWS = () => {
+  stopHttpBridge();
   socket?.removeAllListeners();
   socket?.disconnect();
   socket = undefined;
@@ -367,9 +436,8 @@ chrome.runtime.onMessage.addListener(
       const senderTabId = sender.tab?.id;
 
       if (msg.type === 'question_answer' || msg.type === 'question_error') {
-        if (!activeRequest || !socket) return;
+        if (!activeRequest) return;
 
-        const roomId = await getRoomId();
         const requestId = activeRequest.requestId;
         const responseMessage =
           msg.type === 'question_answer'
@@ -385,11 +453,7 @@ chrome.runtime.onMessage.addListener(
                 },
               };
 
-        socket.emit('clientResponse', {
-          roomId,
-          requestId,
-          message: responseMessage,
-        });
+        await sendClientResponse(requestId, responseMessage);
 
         activeRequest = undefined;
         void processNextRequest();
