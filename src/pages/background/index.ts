@@ -4,7 +4,7 @@ import type { Socket } from 'socket.io-client';
 // This fork is optimized for local Docker self-hosting.
 export const DEFAULT_API_BASE_URL = 'http://127.0.0.1:3000/';
 export const DEFAULT_ROOM_ID = 'local-cline';
-const chatgptBaseUrl = 'https://chatgpt.com';
+const chatgptBaseUrl = 'https://chatgpt.com/?apibeam=1';
 const claudeBaseUrl = 'https://claude.ai/new';
 const zaiBaseUrl = 'https://chat.z.ai';
 
@@ -361,7 +361,9 @@ const stopHttpBridge = () => {
 };
 
 async function connectWS() {
-  startHttpBridge();
+  // Firefox Manifest V3 background pages are non-persistent. The dedicated
+  // ChatGPT content tab owns the local HTTP poller so active requests survive
+  // background eviction. Socket.IO remains available for browsers where it works.
   const baseUrl = await getApiBaseUrl();
 
   if (socket?.connected) return;
