@@ -59,22 +59,30 @@ const isLikelyApiResponse = (value: any) =>
       value.object === 'response' || typeof value.text === 'string'),
   );
 
+type BridgeReply = { ok: boolean; data?: any; error?: string };
+
+const sendRuntimeMessage = (message: any) =>
+  new Promise<BridgeReply>((resolve, reject) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      const error = chrome.runtime.lastError;
+      if (error) {
+        reject(new Error(error.message));
+        return;
+      }
+      resolve((response || { ok: false, error: 'No background response' }) as BridgeReply);
+    });
+  });
+
 export const ChatGPT = () => {
   const activeHttpRequestId = useRef<string | null>(null);
   const workerMode = isDedicatedWorkerTab();
 
   const postHttpResponse = useCallback(async (requestId: string, message: any) => {
-    const response = await fetch(
-      `${LOCAL_API_BASE}connect/${LOCAL_ROOM_ID}/response`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ requestId, message }),
-      },
-    );
-    if (!response.ok) {
-      throw new Error(`ApiBeam response POST failed (${response.status})`);
-    }
+    const result = await sendRuntimeMessage({
+      type: 'http_bridge_respond',
+      content: { requestId, message },
+    });
+    if (!result.ok) throw new Error(result.error || 'ApiBeam response bridge failed');
   }, []);
 
   const reportQuestionError = useCallback(
@@ -152,25 +160,35 @@ export const ChatGPT = () => {
   useEffect(() => {
     if (!workerMode) return;
 
+    document.documentElement.dataset.apibeamWorker = 'starting';
+    delete document.documentElement.dataset.apibeamError;
+    chrome.runtime.sendMessage({ type: 'disconnect' }, () => {
+      void chrome.runtime.lastError;
+    });
+
     let stopped = false;
     void (async () => {
       while (!stopped) {
         try {
-          const response = await fetch(
-            `${LOCAL_API_BASE}connect/${LOCAL_ROOM_ID}/next`,
-            { cache: 'no-store' },
-          );
-          if (!response.ok) {
-            throw new Error(`ApiBeam poll failed (${response.status})`);
+          const result = await sendRuntimeMessage({ type: 'http_bridge_poll' });
+          if (!result.ok) {
+            throw new Error(result.error || 'ApiBeam poll bridge failed');
           }
 
-          const data = await response.json();
+          const data = result.data;
+          document.documentElement.dataset.apibeamWorker = 'connected';
+          document.documentElement.dataset.apibeamLastPoll = String(Date.now());
+          delete document.documentElement.dataset.apibeamError;
           const request = data?.request;
           if (request?.requestId && !activeHttpRequestId.current) {
             activeHttpRequestId.current = request.requestId;
+            document.documentElement.dataset.apibeamRequestId = request.requestId;
             await sendToChat(request, '', false);
           }
         } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          document.documentElement.dataset.apibeamWorker = 'error';
+          document.documentElement.dataset.apibeamError = message;
           console.warn('[ApiBeam] HTTP worker poll failed', error);
         }
 

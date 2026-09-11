@@ -54,7 +54,9 @@ type AgentMessage = {
     | 'get_provider'
     | 'connect'
     | 'disconnect'
-    | 'get_connection_status';
+    | 'get_connection_status'
+    | 'http_bridge_poll'
+    | 'http_bridge_respond';
   content?: any;
   requestId?: string;
   error?: any;
@@ -437,6 +439,41 @@ chrome.runtime.onMessage.addListener(
     void (async () => {
       const senderTabId = sender.tab?.id;
 
+      if (msg.type === 'http_bridge_poll') {
+        try {
+          const roomId = await getRoomId();
+          const base = await getApiBaseUrl();
+          const response = await fetch(`${base}connect/${roomId}/next`, { cache: 'no-store' });
+          if (!response.ok) throw new Error(`HTTP bridge poll failed (${response.status})`);
+          httpBridgeConnected = true;
+          if (socketConnectionStatus.status !== 'connected') setConnectionStatus('connected');
+          sendResponse({ ok: true, data: await response.json() });
+        } catch (error) {
+          httpBridgeConnected = false;
+          sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+        }
+        return;
+      }
+
+      if (msg.type === 'http_bridge_respond') {
+        try {
+          const roomId = await getRoomId();
+          const base = await getApiBaseUrl();
+          const response = await fetch(`${base}connect/${roomId}/response`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(msg.content),
+          });
+          if (!response.ok) throw new Error(`HTTP bridge response failed (${response.status})`);
+          let data: any = {};
+          try { data = await response.json(); } catch { data = {}; }
+          sendResponse({ ok: true, data });
+        } catch (error) {
+          sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+        }
+        return;
+      }
+
       if (msg.type === 'question_answer' || msg.type === 'question_error') {
         if (!activeRequest) return;
 
@@ -553,5 +590,5 @@ chrome.runtime.onMessage.addListener(
   },
 );
 
-// Local Docker is the default in this fork; try to connect automatically.
-void connectWS();
+// The persistent provider tab owns local relay polling. Socket.IO is available
+// only when explicitly requested, avoiding Firefox MV3 worker reconnect races.
