@@ -1,0 +1,25 @@
+services:
+  api:
+    build:
+      context: "${APIBEAM_SERVER_CONTEXT:-https://github.com/httpsdxdv/apibeam-api-server.git#main}"
+      dockerfile: Dockerfile
+    image: apibeam-api:local
+    ports:
+      - "127.0.0.1:${APIBEAM_PORT:-3000}:3000"
+    environment:
+      PORT: 3000
+      NODE_ENV: production
+      APIBEAM_REQUEST_TIMEOUT_MS: ${APIBEAM_REQUEST_TIMEOUT_MS:-180000}
+      APIBEAM_MODELS: ${APIBEAM_MODELS:-gpt-5.6-sol,gpt-4o}
+    restart: unless-stopped
+
+  extension-builder:
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: apibeam-extension-builder:local
+    environment:
+      APIBEAM_BROWSER: ${APIBEAM_BROWSER:-firefox}
+    volumes:
+      - "${APIBEAM_EXTENSION_OUTPUT:-./dist_firefox}:/out"
