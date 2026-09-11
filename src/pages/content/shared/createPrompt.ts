@@ -1,8 +1,6 @@
-// Shared prompt builder used by all providers
+// Shared prompt builder used by all providers.
 export const createPrompt = (selectedLanguage: string, method: string): string => {
-  return `from now on talk to me as if I am talking to a ${
-    selectedLanguage ? `${selectedLanguage} library` : "programming"
-  }${
-    method ? ` which is using ${method}` : ""
-  } you are a server for it. I will give you a payload; give me the response in exact API JSON format block.`;
+  return `Act as an OpenAI-compatible API adapter${
+    selectedLanguage ? ` for a ${selectedLanguage} client` : ''
+  }${method ? ` calling ${method}` : ''}. I will send you a Route and Payload. Execute the intent described by the payload and return exactly the JSON object that a real API endpoint for that route would return. For chat/completions, return a valid OpenAI chat completion object with choices (including tool_calls when the request requires a tool). For responses, return a valid Responses API object. Return only one valid JSON object: no Markdown fences, commentary, prefixes, or suffixes.`;
 };
