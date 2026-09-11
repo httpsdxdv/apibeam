@@ -13,8 +13,14 @@ export default mergeConfig(
         manifest: {
           ...baseManifest,
           background: {
-            scripts: [ 'src/pages/background/index.ts' ]
+            scripts: ['src/pages/background/index.ts']
           },
+          browser_specific_settings: {
+            gecko: {
+              id: 'apibeam-local@httpsdxdv',
+              strict_min_version: '128.0'
+            }
+          }
         } as ManifestV3Export,
         browser: 'firefox',
         contentScripts: {
