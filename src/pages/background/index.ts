@@ -3,6 +3,7 @@ import type { Socket } from 'socket.io-client';
 
 // This fork is optimized for local Docker self-hosting.
 export const DEFAULT_API_BASE_URL = 'http://localhost:3000/';
+export const DEFAULT_ROOM_ID = 'local-cline';
 const chatgptBaseUrl = 'https://chatgpt.com';
 const claudeBaseUrl = 'https://claude.ai/new';
 const zaiBaseUrl = 'https://chat.z.ai';
@@ -76,9 +77,7 @@ chrome.runtime.onInstalled.addListener((details) => {
 });
 
 const createNewRoom = () => {
-  const roomId =
-    Math.random().toString(36).substring(2, 15) +
-    Math.random().toString(36).substring(2, 15);
+  const roomId = DEFAULT_ROOM_ID;
   chrome.storage.local.set({ roomId });
   return roomId;
 };
