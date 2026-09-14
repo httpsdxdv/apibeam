@@ -48,3 +48,16 @@ Make httpsdxdv/apibeam + apibeam-api-server work end-to-end on this Windows PC w
 - Pre-change rollback snapshot: D:\AIWorkspace\Backups\apibeam-20260911-110045.
 - Deterministic local room local-cline is the current unmerged runtime change; extension build passed after that edit.
 
+
+## 2026-09-14 - Firefox relay completion
+- Fixed Firefox MV3 event-page suspension by holding an `apibeam-keepalive` runtime port from the dedicated ChatGPT worker tab.
+- Added a DOM response fallback for current ChatGPT UI behavior when the legacy SSE fetch interceptor does not emit a parseable response event.
+- Docker Firefox + Chrome production builds PASS.
+- Live status PASS: `connected=true`, `httpBridgeConnected=true`, `socketConnected=false`.
+- `/v1/models` PASS with `gpt-5.6-sol` and `gpt-4o`.
+- `/v1/chat/completions` PASS: exact `APIBEAM_REAL_OK_2` returned in OpenAI chat-completion JSON.
+- Two consecutive chat completions PASS: `CHAT_ONE_OK`, `CHAT_TWO_OK`.
+- `/v1/responses` PASS: exact `RESPONSES_OK` in Responses-style envelope.
+- Streaming chat PASS: `text/event-stream` chunks returned `STREAM_OK` followed by `[DONE]`.
+- Working local OpenAI-compatible base URL: `http://127.0.0.1:3000/app/local-cline/v1`.
+- The server currently does not enforce API-key authentication; clients that require a non-empty key can use a local placeholder such as `apibeam-local`.

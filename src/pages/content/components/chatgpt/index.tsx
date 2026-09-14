@@ -52,6 +52,30 @@ const waitForSendButton = async (
   return null;
 };
 
+const waitForRenderedAssistantResponse = async (
+  previousCount: number,
+  timeoutMs = 120000,
+): Promise<string | null> => {
+  const deadline = Date.now() + timeoutMs;
+  let lastText = '';
+  let stableSince = 0;
+  while (Date.now() < deadline) {
+    const messages = Array.from(
+      document.querySelectorAll<HTMLElement>('[data-message-author-role="assistant"]'),
+    );
+    const text = messages.length > previousCount ? messages.at(-1)?.innerText.trim() || '' : '';
+    const generating = Array.from(document.querySelectorAll('button')).some((button) =>
+      (button.getAttribute('aria-label') || '').toLowerCase().includes('stop'),
+    );
+    if (text) {
+      if (text !== lastText) { lastText = text; stableSince = Date.now(); }
+      if (!generating && Date.now() - stableSince >= 750) return text;
+    }
+    await sleep(250);
+  }
+  return null;
+};
+
 const isLikelyApiResponse = (value: any) =>
   Boolean(
     value && typeof value === 'object' &&
@@ -143,7 +167,23 @@ export const ChatGPT = () => {
 
       const submitButton = await waitForSendButton();
       if (submitButton) {
+        const assistantCount = document.querySelectorAll(
+          '[data-message-author-role="assistant"]',
+        ).length;
+        const requestId = activeHttpRequestId.current;
         submitButton.click();
+        if (workerMode && requestId) {
+          void (async () => {
+            const text = await waitForRenderedAssistantResponse(assistantCount);
+            if (!text || activeHttpRequestId.current !== requestId) return;
+            try {
+              await postHttpResponse(requestId, { text });
+              activeHttpRequestId.current = null;
+            } catch (error) {
+              console.error('[ApiBeam] DOM response delivery failed', error);
+            }
+          })();
+        }
         return;
       }
 
@@ -152,7 +192,7 @@ export const ChatGPT = () => {
         'ChatGPT composer appeared, but the Send button never became ready.',
       );
     },
-    [reportQuestionError],
+    [postHttpResponse, reportQuestionError, workerMode],
   );
 
   useMessageHandler(sendToChat);
@@ -162,6 +202,7 @@ export const ChatGPT = () => {
 
     document.documentElement.dataset.apibeamWorker = 'starting';
     delete document.documentElement.dataset.apibeamError;
+    const keepAlivePort = chrome.runtime.connect({ name: 'apibeam-keepalive' });
     chrome.runtime.sendMessage({ type: 'disconnect' }, () => {
       void chrome.runtime.lastError;
     });
@@ -198,6 +239,7 @@ export const ChatGPT = () => {
 
     return () => {
       stopped = true;
+      keepAlivePort.disconnect();
     };
   }, [sendToChat, workerMode]);
 

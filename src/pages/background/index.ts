@@ -434,6 +434,14 @@ const disconnectWS = () => {
   setConnectionStatus('disconnected');
 };
 
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'apibeam-keepalive') return;
+  port.onDisconnect.addListener(() => {
+    // The provider tab owns the port. Firefox may suspend this event page
+    // after the tab closes, which is expected.
+  });
+});
+
 chrome.runtime.onMessage.addListener(
   (msg: AgentMessage, sender, sendResponse) => {
     void (async () => {

@@ -1,6 +1,6 @@
-﻿# ApiBeam Project State
+# ApiBeam Project State
 
-Last updated: 2026-09-11 (America/Sao_Paulo)
+Last updated: 2026-09-14 (America/Sao_Paulo)
 
 ## Goal
 Deliver a reliable local ApiBeam setup on Windows 11 where Firefox uses the signed-in ChatGPT web session as the backend for OpenAI-compatible requests from Cline.
@@ -24,13 +24,13 @@ Deliver a reliable local ApiBeam setup on Windows 11 where Firefox uses the sign
 - Server fork is now cloned locally beside the client repo.
 - Firefox is the primary target browser.
 - Local relay target is `http://127.0.0.1:3000` / `http://localhost:3000`.
-- Current completion phase: local end-to-end runtime validation and Cline integration.
+- Current completion phase: local OpenAI-compatible relay is verified end-to-end; optional next phase is client integration/startup automation.
 
 ## Current branch / checkpoint
 Continuity framework is being added on `chore/project-continuity` in the client repository. No application behavior is intentionally changed by this branch.
 
 ## Next action
-Run `./project.ps1 doctor`, then `./project.ps1 start`. Verify `/app/health`, build/load the Firefox extension, confirm Socket.IO connection and room ID, then test `/models` and a real chat completion before configuring Cline.
+Local relay is verified. Preserve the dedicated Firefox worker tab and use `http://127.0.0.1:3000/app/local-cline/v1` for OpenAI-compatible clients. Next optional work: automate Firefox temporary-addon startup and configure specific clients such as Cline/Open WebUI.
 
 ## Immediate task queue
 - [ ] Validate local prerequisites and Docker health.
