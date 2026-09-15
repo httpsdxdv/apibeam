@@ -63,9 +63,11 @@ const isChatGenerating = () => {
 
 const waitForRenderedAssistantResponse = async (
   previousCount: number,
+  previousLastAssistant: HTMLElement | null,
   timeoutMs = 120000,
 ): Promise<string | null> => {
   const deadline = Date.now() + timeoutMs;
+  const previousLastText = previousLastAssistant?.innerText.trim() || '';
   let lastText = '';
   let stableSince = 0;
   let firstTextAt = 0;
@@ -75,12 +77,18 @@ const waitForRenderedAssistantResponse = async (
     const messages = Array.from(
       document.querySelectorAll<HTMLElement>('[data-message-author-role="assistant"]'),
     );
-    const text =
-      messages.length > previousCount
-        ? messages.at(-1)?.innerText.trim() || ''
-        : '';
+    const latest = messages.at(-1) || null;
     const generating = isChatGenerating();
     sawGenerating ||= generating;
+
+    const latestText = latest?.innerText.trim() || '';
+    const isNewAssistant = Boolean(
+      latest &&
+        (messages.length > previousCount ||
+          latest !== previousLastAssistant ||
+          latestText !== previousLastText),
+    );
+    const text = isNewAssistant ? latestText : '';
 
     if (text) {
       if (!firstTextAt) firstTextAt = Date.now();
@@ -209,21 +217,49 @@ export const ChatGPT = () => {
 
       const submitButton = await waitForSendButton();
       if (submitButton) {
-        const assistantCount = document.querySelectorAll(
-          '[data-message-author-role="assistant"]',
-        ).length;
+        const assistantMessages = Array.from(
+          document.querySelectorAll<HTMLElement>('[data-message-author-role="assistant"]'),
+        );
+        const assistantCount = assistantMessages.length;
+        const previousLastAssistant = assistantMessages.at(-1) || null;
         const requestId = activeHttpRequestId.current;
         submitButton.click();
         if (workerMode && requestId) {
           void (async () => {
-            const text = await waitForRenderedAssistantResponse(assistantCount);
-            if (!text || activeHttpRequestId.current !== requestId) return;
+            const text = await waitForRenderedAssistantResponse(
+              assistantCount,
+              previousLastAssistant,
+            );
+            if (activeHttpRequestId.current !== requestId) return;
+
+            if (!text) {
+              try {
+                await postHttpResponse(requestId, {
+                  error: {
+                    message: 'ApiBeam timed out waiting for the rendered ChatGPT response.',
+                    type: 'apibeam_browser_error',
+                    code: 'dom_response_timeout',
+                  },
+                });
+              } catch (error) {
+                console.error('[ApiBeam] DOM timeout delivery failed', error);
+              } finally {
+                if (activeHttpRequestId.current === requestId) {
+                  activeHttpRequestId.current = null;
+                }
+              }
+              return;
+            }
+
             try {
               const parsed = parseRenderedApiResponse(text);
               await postHttpResponse(requestId, parsed ?? { text });
-              activeHttpRequestId.current = null;
             } catch (error) {
               console.error('[ApiBeam] DOM response delivery failed', error);
+            } finally {
+              if (activeHttpRequestId.current === requestId) {
+                activeHttpRequestId.current = null;
+              }
             }
           })();
         }
