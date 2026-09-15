@@ -27,10 +27,10 @@ Deliver a reliable local ApiBeam setup on Windows 11 where Firefox uses the sign
 - Current completion phase: local OpenAI-compatible relay is verified end-to-end; optional next phase is client integration/startup automation.
 
 ## Current branch / checkpoint
-Continuity framework is being added on `chore/project-continuity` in the client repository. No application behavior is intentionally changed by this branch.
+Firefox DOM relay hardening is validated on `fix/dom-response-normalization` at commits `507230e` and `ff3cbe4`.
 
 ## Next action
-Local relay is verified. Preserve the dedicated Firefox worker tab and use `http://127.0.0.1:3000/app/local-cline/v1` for OpenAI-compatible clients. Next optional work: automate Firefox temporary-addon startup and configure specific clients such as Cline/Open WebUI.
+Use `http://127.0.0.1:3000/app/local-cline/v1` in Cline and run a real coding request. The Firefox HTTP bridge, consecutive non-streaming calls, streaming SSE, and `/v1/responses` are all verified after the DOM relay fix. Then automate temporary-addon startup/recovery.
 
 ## Immediate task queue
 - [ ] Validate local prerequisites and Docker health.

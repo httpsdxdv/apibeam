@@ -61,3 +61,14 @@ Make httpsdxdv/apibeam + apibeam-api-server work end-to-end on this Windows PC w
 - Streaming chat PASS: `text/event-stream` chunks returned `STREAM_OK` followed by `[DONE]`.
 - Working local OpenAI-compatible base URL: `http://127.0.0.1:3000/app/local-cline/v1`.
 - The server currently does not enforce API-key authentication; clients that require a non-empty key can use a local placeholder such as `apibeam-local`.
+
+## 2026-09-15 - DOM relay normalization and timeout recovery
+- Root cause: Firefox DOM fallback returned partially rendered API JSON as plain text, causing JSON-in-JSON responses and occasional stuck requests.
+- `507230e`: wait for rendered assistant output to stabilize and parse complete JSON before posting it back to the server.
+- `ff3cbe4`: detect same-node assistant updates and always release the active request on DOM timeout/delivery failure.
+- Rebuilt Firefox/Chrome extension images; Firefox bundle verified to contain `dom_response_timeout` recovery logic.
+- Live status PASS: `connected=true`, `httpBridgeConnected=true`, `queuedHttpRequests=0`.
+- Consecutive non-streaming PASS: `FINAL_ONE_OK`, then `FINAL_TWO_OK`.
+- Streaming PASS: `FINAL_STREAM_OK` followed by `[DONE]`.
+- `/v1/responses` PASS: `FINAL_RESPONSES_OK`.
+- Next: configure/run a real Cline coding request against `http://127.0.0.1:3000/app/local-cline/v1`.
