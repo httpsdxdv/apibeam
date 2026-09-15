@@ -52,6 +52,15 @@ const waitForSendButton = async (
   return null;
 };
 
+const isChatGenerating = () => {
+  if (document.querySelector('[data-testid="stop-button"]')) return true;
+  return Array.from(document.querySelectorAll('button')).some((button) => {
+    const label = (button.getAttribute('aria-label') || '').toLowerCase();
+    const testId = (button.getAttribute('data-testid') || '').toLowerCase();
+    return label.includes('stop') || testId.includes('stop');
+  });
+};
+
 const waitForRenderedAssistantResponse = async (
   previousCount: number,
   timeoutMs = 120000,
@@ -59,21 +68,54 @@ const waitForRenderedAssistantResponse = async (
   const deadline = Date.now() + timeoutMs;
   let lastText = '';
   let stableSince = 0;
+  let firstTextAt = 0;
+  let sawGenerating = false;
+
   while (Date.now() < deadline) {
     const messages = Array.from(
       document.querySelectorAll<HTMLElement>('[data-message-author-role="assistant"]'),
     );
-    const text = messages.length > previousCount ? messages.at(-1)?.innerText.trim() || '' : '';
-    const generating = Array.from(document.querySelectorAll('button')).some((button) =>
-      (button.getAttribute('aria-label') || '').toLowerCase().includes('stop'),
-    );
+    const text =
+      messages.length > previousCount
+        ? messages.at(-1)?.innerText.trim() || ''
+        : '';
+    const generating = isChatGenerating();
+    sawGenerating ||= generating;
+
     if (text) {
-      if (text !== lastText) { lastText = text; stableSince = Date.now(); }
-      if (!generating && Date.now() - stableSince >= 750) return text;
+      if (!firstTextAt) firstTextAt = Date.now();
+      if (text !== lastText) {
+        lastText = text;
+        stableSince = Date.now();
+      }
+
+      const stableFor = Date.now() - stableSince;
+      const visibleFor = Date.now() - firstTextAt;
+      const stableEnough = stableFor >= 2500 && visibleFor >= 2500;
+      const conservativeFallback = !sawGenerating && stableFor >= 6000;
+      if ((!generating && stableEnough) || conservativeFallback) return text;
     }
     await sleep(250);
   }
   return null;
+};
+
+const parseRenderedApiResponse = (text: string): any | null => {
+  let candidate = text.trim();
+  candidate = candidate.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+  candidate = candidate.replace(/^json\s*[\r\n]+/i, '').trim();
+
+  if (!candidate) return null;
+  const startsLikeJson = candidate.startsWith('{') || candidate.startsWith('[');
+  const endsLikeJson = candidate.endsWith('}') || candidate.endsWith(']');
+  if (!startsLikeJson || !endsLikeJson) return null;
+
+  try {
+    const parsed = JSON.parse(candidate);
+    return isLikelyApiResponse(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
 };
 
 const isLikelyApiResponse = (value: any) =>
@@ -177,7 +219,8 @@ export const ChatGPT = () => {
             const text = await waitForRenderedAssistantResponse(assistantCount);
             if (!text || activeHttpRequestId.current !== requestId) return;
             try {
-              await postHttpResponse(requestId, { text });
+              const parsed = parseRenderedApiResponse(text);
+              await postHttpResponse(requestId, parsed ?? { text });
               activeHttpRequestId.current = null;
             } catch (error) {
               console.error('[ApiBeam] DOM response delivery failed', error);
